@@ -74,12 +74,12 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 func (r *Request) parse(data []byte) (int, error) {
 	totalBytesParsed := 0
 	for r.status != requestStatusDone {
-		if len(data[totalBytesParsed:]) == 0 {
-			return 0, fmt.Errorf("incomplete request")
-		}
 		n, err := r.parseSingle(data[totalBytesParsed:])
 		if err != nil {
 			return 0, err
+		}
+		if n == 0 {
+			break
 		}
 		totalBytesParsed += n
 	}
@@ -87,9 +87,6 @@ func (r *Request) parse(data []byte) (int, error) {
 }
 
 func (r *Request) parseSingle(data []byte) (int, error) {
-	if len(data) == 0 {
-		return 0, fmt.Errorf("no data left to parse")
-	}
 	switch r.status {
 	case requestStatusInitialized:
 		requestLine, bytesRead, err := parseRequestLine(data)
