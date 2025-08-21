@@ -4,23 +4,24 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"httpfromtcp/internal/headers"
 	"io"
 	"net/url"
 	"strings"
 )
 
-type status int
+type requestStatus int
 
 const (
-	initialized status = iota
-	done
+	requestStatusInitialized requestStatus = iota
+	RequestStatusParsingHeaders
+	requestStatusDone
 )
-
-const buffersize int = 8
 
 type Request struct {
 	RequestLine RequestLine
-	Status      status
+	Headers     headers.Headers
+	status      requestStatus
 }
 
 type RequestLine struct {
@@ -30,68 +31,98 @@ type RequestLine struct {
 }
 
 const crlf = "\r\n"
+const buffersize int = 8
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
 
-	request := newRequest()
+	request := &Request{
+		status: requestStatusInitialized,
+	}
 	buffer := make([]byte, buffersize)
 	readToIndex := 0
 
-	for request.Status == initialized {
+	for request.status != requestStatusDone {
 		if readToIndex >= len(buffer) {
 			tempBuff := make([]byte, len(buffer)*2)
 			copy(tempBuff, buffer)
 			buffer = tempBuff
 		}
+
 		nRead, err := reader.Read(buffer[readToIndex:])
-		readToIndex += nRead
-		if errors.Is(err, io.EOF) {
-			request.Status = done
-		}
-
-		if readToIndex > 0 {
-			nParsed, err := request.parse(buffer[:readToIndex])
-			if err != nil {
-				return nil, fmt.Errorf("error parsing buffer: %v", err)
-			}
-			if nParsed > 0 {
-				tempBuff := make([]byte, readToIndex-nParsed)
-				copy(tempBuff, buffer[nParsed:readToIndex])
-				buffer = tempBuff
-				readToIndex -= nParsed
-			}
-		}
-
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				if request.status != requestStatusDone {
+					return nil, fmt.Errorf("Incomplete Request")
+				}
+				break
+			}
 			return nil, fmt.Errorf("error reading request: %v", err)
 		}
+		readToIndex += nRead
+
+		nParsed, err := request.parse(buffer[:readToIndex])
+		if err != nil {
+			return nil, fmt.Errorf("error parsing buffer: %v", err)
+		}
+		copy(buffer, buffer[nParsed:])
+		readToIndex -= nParsed
 	}
+	fmt.Printf("HERE WITH REQUEST:\n%v\n", request)
 	return request, nil
 }
 
-// creates a new empty *Request with an initialized Status
-func newRequest() *Request {
-	return &Request{
-		Status: initialized,
+func (r *Request) parse(data []byte) (int, error) {
+	totalBytesParsed := 0
+	for r.status != requestStatusDone {
+		if len(data[totalBytesParsed:]) == 0 {
+			return 0, fmt.Errorf("incomplete request")
+		}
+		n, err := r.parseSingle(data[totalBytesParsed:])
+		if err != nil {
+			return 0, err
+		}
+		totalBytesParsed += n
 	}
+	return totalBytesParsed, nil
 }
 
-func (r *Request) parse(data []byte) (int, error) {
-	if r.Status == done {
+func (r *Request) parseSingle(data []byte) (int, error) {
+	if len(data) == 0 {
+		return 0, fmt.Errorf("no data left to parse")
+	}
+	switch r.status {
+	case requestStatusInitialized:
+		requestLine, bytesRead, err := parseRequestLine(data)
+		if err != nil {
+			return 0, fmt.Errorf("Encountered an error parsing request line:\n %s", err)
+		}
+		if bytesRead == 0 {
+			fmt.Printf("Need more data, so far %v\n", len(data))
+			return 0, nil
+		}
+		fmt.Printf("read data, so far %v bytes read\n", bytesRead)
+		r.RequestLine = *requestLine
+		r.status = RequestStatusParsingHeaders
+		return bytesRead, nil
+	case RequestStatusParsingHeaders:
+		if r.Headers == nil {
+			r.Headers = headers.NewHeaders()
+		}
+		bytesRead, doneHeaders, err := r.Headers.Parse(data)
+		if err != nil {
+			return 0, err
+		}
+		fmt.Printf("i have parsed %v bytes for header, and done is %v\n", bytesRead, doneHeaders)
+		if doneHeaders {
+			r.status = requestStatusDone
+		}
+		return bytesRead, nil
+	case requestStatusDone:
 		return 0, fmt.Errorf("request already parsed")
-	}
-	if r.Status != initialized {
+	default:
 		return 0, fmt.Errorf("unrecognized status")
+
 	}
-	requestLine, bytesRead, err := parseRequestLine(data)
-	if err != nil {
-		return 0, fmt.Errorf("Encountered an error parsing request line:\n %s", err)
-	} else if bytesRead == 0 {
-		return 0, nil
-	}
-	r.RequestLine = *requestLine
-	r.Status = done
-	return bytesRead, err
 }
 
 func parseRequestLine(data []byte) (*RequestLine, int, error) {
@@ -100,12 +131,11 @@ func parseRequestLine(data []byte) (*RequestLine, int, error) {
 		return nil, 0, nil
 	}
 	requestLineText := string(data[:idx])
-	bytesRead := idx + len([]byte(crlf))
 	requestLine, err := requestLineFromString(requestLineText)
 	if err != nil {
-		return nil, bytesRead, fmt.Errorf("couldnt get requestline from string: %s", err)
+		return nil, 0, fmt.Errorf("couldnt get requestline from string: %s", err)
 	}
-	return requestLine, bytesRead, nil
+	return requestLine, idx + len([]byte(crlf)), nil
 }
 func requestLineFromString(str string) (*RequestLine, error) {
 
@@ -132,7 +162,7 @@ func requestLineFromString(str string) (*RequestLine, error) {
 	httpVersion := parts[2]
 	versionParts := strings.Split(httpVersion, "/")
 
-	if len(versionParts) > 2 {
+	if len(versionParts) != 2 {
 		return nil, fmt.Errorf("malformed start line: %s", httpVersion)
 	}
 

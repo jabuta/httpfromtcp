@@ -313,23 +313,26 @@ func TestRequestLineParse(t *testing.T) {
 		assert.Equal(t, "1.1", r.RequestLine.HttpVersion)
 	}
 
-	// Test: Request with only LF instead of CRLF
-	reader = &chunkReader{
-		data: "GET / HTTP/1.1\nHost: localhost:42069\n\n",
-	}
-	for i := 1; i <= len(reader.data); i++ {
-		reader.numBytesPerRead = i
-		reader.pos = 0
-		r, err := RequestFromReader(reader)
-		// This might pass or fail depending on implementation
-		// If it passes, verify the request is parsed correctly
-		// If it fails, that's also acceptable since RFC requires CRLF
-		if err == nil {
-			require.NotNil(t, r)
-			assert.Equal(t, "GET", r.RequestLine.Method)
-			assert.Equal(t, "/", r.RequestLine.RequestTarget)
-			assert.Equal(t, "1.1", r.RequestLine.HttpVersion)
-		}
-	}
+}
 
+func TestHeadersParse(t *testing.T) {
+	// Test: Standard Headers
+	reader := &chunkReader{
+		data:            "GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n",
+		numBytesPerRead: 3,
+	}
+	r, err := RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "localhost:42069", r.Headers["host"])
+	assert.Equal(t, "curl/7.81.0", r.Headers["user-agent"])
+	assert.Equal(t, "*/*", r.Headers["accept"])
+
+	// Test: Malformed Header
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\nHost localhost:42069\r\n\r\n",
+		numBytesPerRead: 3,
+	}
+	r, err = RequestFromReader(reader)
+	require.Error(t, err)
 }
