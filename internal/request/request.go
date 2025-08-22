@@ -15,12 +15,14 @@ type requestStatus int
 const (
 	requestStatusInitialized requestStatus = iota
 	RequestStatusParsingHeaders
+	requestStatusParsingBody
 	requestStatusDone
 )
 
 type Request struct {
 	RequestLine RequestLine
 	Headers     headers.Headers
+	Body        []byte
 	status      requestStatus
 }
 
@@ -109,9 +111,16 @@ func (r *Request) parseSingle(data []byte) (int, error) {
 			return 0, err
 		}
 		if doneHeaders {
-			r.status = requestStatusDone
+			r.status = requestStatusParsingBody
 		}
 		return bytesRead, nil
+	case requestStatusParsingBody:
+		bodyLength, ok := r.Headers.Get("Content-Length")
+		if !ok {
+			r.status = requestStatusDone
+			return 0, nil
+		}
+		//continue body parse implementation
 	case requestStatusDone:
 		return 0, fmt.Errorf("request already parsed")
 	default:
@@ -132,6 +141,7 @@ func parseRequestLine(data []byte) (*RequestLine, int, error) {
 	}
 	return requestLine, idx + len([]byte(crlf)), nil
 }
+
 func requestLineFromString(str string) (*RequestLine, error) {
 
 	parts := strings.Split(str, " ")
