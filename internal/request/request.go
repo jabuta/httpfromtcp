@@ -67,7 +67,6 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		copy(buffer, buffer[nParsed:])
 		readToIndex -= nParsed
 	}
-	fmt.Printf("HERE WITH REQUEST:\n%v\n", request)
 	return request, nil
 }
 
@@ -109,7 +108,6 @@ func (r *Request) parseSingle(data []byte) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		fmt.Printf("i have parsed %v bytes for header, and done is %v\n", bytesRead, doneHeaders)
 		if doneHeaders {
 			r.status = requestStatusDone
 		}
