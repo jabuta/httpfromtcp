@@ -382,6 +382,7 @@ func TestBodyParse(t *testing.T) {
 		data: "POST /submit HTTP/1.1\r\n" +
 			"Host: localhost:42069\r\n" +
 			"\r\n",
+		numBytesPerRead: 3,
 	}
 	r, err = RequestFromReader(reader)
 	require.NoError(t, err)

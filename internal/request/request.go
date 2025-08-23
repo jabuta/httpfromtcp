@@ -7,6 +7,7 @@ import (
 	"httpfromtcp/internal/headers"
 	"io"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -38,7 +39,9 @@ const buffersize int = 8
 func RequestFromReader(reader io.Reader) (*Request, error) {
 
 	request := &Request{
-		status: requestStatusInitialized,
+		status:  requestStatusInitialized,
+		Headers: headers.NewHeaders(),
+		Body:    make([]byte, 0),
 	}
 	buffer := make([]byte, buffersize)
 	readToIndex := 0
@@ -95,17 +98,12 @@ func (r *Request) parseSingle(data []byte) (int, error) {
 			return 0, fmt.Errorf("Encountered an error parsing request line:\n %s", err)
 		}
 		if bytesRead == 0 {
-			fmt.Printf("Need more data, so far %v\n", len(data))
 			return 0, nil
 		}
-		fmt.Printf("read data, so far %v bytes read\n", bytesRead)
 		r.RequestLine = *requestLine
 		r.status = RequestStatusParsingHeaders
 		return bytesRead, nil
 	case RequestStatusParsingHeaders:
-		if r.Headers == nil {
-			r.Headers = headers.NewHeaders()
-		}
 		bytesRead, doneHeaders, err := r.Headers.Parse(data)
 		if err != nil {
 			return 0, err
@@ -115,17 +113,35 @@ func (r *Request) parseSingle(data []byte) (int, error) {
 		}
 		return bytesRead, nil
 	case requestStatusParsingBody:
-		bodyLength, ok := r.Headers.Get("Content-Length")
+		bodyLengthStr, ok := r.Headers.Get("Content-Length")
 		if !ok {
 			r.status = requestStatusDone
 			return 0, nil
 		}
-		//continue body parse implementation
+		contentLength, err := strconv.Atoi(bodyLengthStr)
+		if err != nil {
+			return 0, fmt.Errorf("Encountered an error parsing content length:\n %s", err)
+		}
+		if contentLength < 0 {
+			return 0, fmt.Errorf("Invalid content length: %v", contentLength)
+		}
+
+		r.Body = append(r.Body, data...)
+
+		if len(r.Body) > contentLength {
+			r.status = requestStatusDone
+			return 0, fmt.Errorf("Body longer than Content-Length header")
+		}
+
+		if len(r.Body) == contentLength {
+			r.status = requestStatusDone
+		}
+		return len(data), nil
+
 	case requestStatusDone:
 		return 0, fmt.Errorf("request already parsed")
 	default:
 		return 0, fmt.Errorf("unrecognized status")
-
 	}
 }
 
