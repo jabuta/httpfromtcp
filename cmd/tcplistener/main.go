@@ -32,7 +32,5 @@ func main() {
 		for key, value := range req.Headers {
 			fmt.Printf("- %s: %s\n", key, value)
 		}
-		fmt.Printf("Body:\n%s\n", req.Body)
-		fmt.Println("Connection to ", conn.RemoteAddr(), "closed")
 	}
 }
