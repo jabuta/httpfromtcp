@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
+	"httpfromtcp/internal/request"
 	"httpfromtcp/internal/response"
 	"log"
 	"net"
@@ -11,15 +13,17 @@ import (
 type Server struct {
 	listener net.Listener
 	closed   atomic.Bool
+	handler  Handler
 }
 
-func Serve(port int) (*Server, error) {
+func Serve(port int, h Handler) (*Server, error) {
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return nil, err
 	}
 	s := &Server{
 		listener: l,
+		handler:  h,
 	}
 	go s.listen()
 	return s, nil
@@ -49,7 +53,21 @@ func (s *Server) listen() {
 
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
+	b := &bytes.Buffer{}
+
+	request, err := request.RequestFromReader(conn)
+	if err != nil {
+		response.WriteStatusLine(conn, response.HttpNotFoud)
+		return
+	}
+	handlerError := s.handler(b, request)
+	if handlerError != nil {
+		handlerError.respondWithError(conn)
+		return
+	}
+
+	defaultHeaders := response.GetDefaultHeaders(b.Len())
 	response.WriteStatusLine(conn, response.HttpOK)
-	defaultHeaders := response.GetDefaultHeaders(0)
 	response.WriteHeaders(conn, defaultHeaders)
+	b.WriteTo(conn)
 }
