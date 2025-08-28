@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 )
 
+type Handler func(w *response.Writer, req *request.Request)
+
 type Server struct {
 	listener net.Listener
 	closed   atomic.Bool
