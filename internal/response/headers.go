@@ -9,11 +9,11 @@ import (
 const crlf = "\r\n"
 
 func GetDefaultHeaders(contentLen int) headers.Headers {
-	return headers.Headers{
-		"Content-Length": fmt.Sprintf("%v", contentLen),
-		"Connection":     "close",
-		"Content-Type":   "text/plain",
-	}
+	h := headers.Headers{}
+	h.Set("Content-Length", fmt.Sprintf("%v", contentLen))
+	h.Set("Connection", "close")
+	h.Set("Content-Type", "text/plain")
+	return h
 }
 
 func WriteHeaders(w io.Writer, headers headers.Headers) error {

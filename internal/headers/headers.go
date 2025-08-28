@@ -57,6 +57,15 @@ func (h Headers) Set(key, value string) error {
 	return nil
 }
 
+func (h Headers) Overwrite(key, value string) error {
+	if !isValidKey(key) {
+		return fmt.Errorf("invalid key characters")
+	}
+	key = strings.ToLower(key)
+	h[key] = value
+	return nil
+}
+
 func (h Headers) Get(key string) (string, bool) {
 	key = strings.ToLower(key)
 	value, ok := h[key]

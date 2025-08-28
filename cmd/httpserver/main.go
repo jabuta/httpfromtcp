@@ -1,11 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"httpfromtcp/internal/request"
 	"httpfromtcp/internal/response"
 	"httpfromtcp/internal/server"
-	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -28,20 +26,54 @@ func main() {
 	log.Println("Server gracefully stopped")
 }
 
-func testHandler(w io.Writer, req *request.Request) *server.HandlerError {
+func testHandler(w *response.Writer, req *request.Request) {
 	switch req.RequestLine.RequestTarget {
 	case "/yourproblem":
-		return &server.HandlerError{
-			Code:    response.HttpNotFoud,
-			Message: "Your problem is not my problem\n",
-		}
+		res := []byte(`<<html>
+  <head>
+    <title>400 Bad Request</title>
+  </head>
+  <body>
+    <h1>Bad Request</h1>
+    <p>Your request honestly kinda sucked.</p>
+  </body>
+</html>`)
+		w.WriteStatusLine(response.HttpNotFoud)
+		headers := response.GetDefaultHeaders(len(res))
+		headers.Overwrite("Content-Type", "text/html")
+		w.WriteHeaders(headers)
+		w.WriteBody(res)
+		return
 	case "/myproblem":
-		return &server.HandlerError{
-			Code:    response.HttpServerError,
-			Message: "Woopsie, my bad\n",
-		}
+		res := []byte(`<html>
+  <head>
+    <title>500 Internal Server Error</title>
+  </head>
+  <body>
+    <h1>Internal Server Error</h1>
+    <p>Okay, you know what? This one is on me.</p>
+  </body>
+</html>`)
+		w.WriteStatusLine(response.HttpServerError)
+		headers := response.GetDefaultHeaders(len(res))
+		headers.Overwrite("Content-Type", "text/html")
+		w.WriteHeaders(headers)
+		w.WriteBody(res)
+		return
 	default:
-		fmt.Fprint(w, "All good, frfr\n")
-		return nil
+		res := []byte(`<html>
+  <head>
+    <title>200 OK</title>
+  </head>
+  <body>
+    <h1>Success!</h1>
+    <p>Your request was an absolute banger.</p>
+  </body>
+</html>`)
+		w.WriteStatusLine(response.HttpOK)
+		headers := response.GetDefaultHeaders(len(res))
+		headers.Overwrite("Content-Type", "text/html")
+		w.WriteHeaders(headers)
+		w.WriteBody(res)
 	}
 }

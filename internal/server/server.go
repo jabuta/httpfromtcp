@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
 	"httpfromtcp/internal/request"
 	"httpfromtcp/internal/response"
@@ -53,21 +52,12 @@ func (s *Server) listen() {
 
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
-	b := &bytes.Buffer{}
+	w := response.NewWriter(conn)
 
 	request, err := request.RequestFromReader(conn)
 	if err != nil {
-		response.WriteStatusLine(conn, response.HttpNotFoud)
+		w.WriteStatusLine(response.HttpNotFoud)
 		return
 	}
-	handlerError := s.handler(b, request)
-	if handlerError != nil {
-		handlerError.respondWithError(conn)
-		return
-	}
-
-	defaultHeaders := response.GetDefaultHeaders(b.Len())
-	response.WriteStatusLine(conn, response.HttpOK)
-	response.WriteHeaders(conn, defaultHeaders)
-	b.WriteTo(conn)
+	s.handler(w, request)
 }
