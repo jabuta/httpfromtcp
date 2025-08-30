@@ -66,6 +66,11 @@ func (h Headers) Overwrite(key, value string) error {
 	return nil
 }
 
+func (h Headers) Delete(key string) {
+	key = strings.ToLower(key)
+	delete(h, key)
+}
+
 func (h Headers) Get(key string) (string, bool) {
 	key = strings.ToLower(key)
 	value, ok := h[key]

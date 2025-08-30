@@ -1,12 +1,17 @@
 package main
 
 import (
+	"fmt"
+	"httpfromtcp/internal/headers"
 	"httpfromtcp/internal/request"
 	"httpfromtcp/internal/response"
 	"httpfromtcp/internal/server"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 )
 
@@ -27,9 +32,13 @@ func main() {
 }
 
 func testHandler(w *response.Writer, req *request.Request) {
+	if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin") {
+		handleHttpBinProxy(w, req.RequestLine.RequestTarget)
+		return
+	}
 	switch req.RequestLine.RequestTarget {
 	case "/yourproblem":
-		res := []byte(`<<html>
+		res := []byte(`<html>
   <head>
     <title>400 Bad Request</title>
   </head>
@@ -76,4 +85,53 @@ func testHandler(w *response.Writer, req *request.Request) {
 		w.WriteHeaders(headers)
 		w.WriteBody(res)
 	}
+}
+
+func handleHttpBinProxy(w *response.Writer, path string) {
+
+	path = strings.Trim(path, "httpbin/")
+
+	binResp, err := http.Get(fmt.Sprintf("https://httpbin.org/%s", path))
+	if err != nil {
+		// if urlErr, ok := err.(*url.Error); ok {
+		// 	if urlErr.Timeout() {
+		// 		w.WriteStatusLine(response.HttpServerError)
+		// 		return
+		// 	}
+		// }
+		w.WriteStatusLine(response.HttpServerError)
+		return
+	}
+	// Set headers
+	h := headers.NewHeaders()
+	for key, values := range binResp.Header {
+		for _, value := range values {
+			h.Set(key, value)
+		}
+	}
+
+	// Get Status Code and send to client and respond with headers
+	statusCode := response.StatusCode(binResp.StatusCode)
+	w.WriteStatusLine(statusCode)
+	w.WriteHeaders(h)
+
+	b := make([]byte, 1024)
+
+	for {
+		n, err := binResp.Body.Read(b)
+		fmt.Println("bytes read: ", n)
+		if n > 0 {
+			if _, writeErr := w.WriteBody(b[:n]); writeErr != nil {
+				fmt.Printf("Write error: %s", writeErr)
+			}
+		}
+		if err != nil {
+			if err != io.EOF {
+				fmt.Printf("Read error: %s", err)
+				return
+			}
+			break
+		}
+	}
+
 }
