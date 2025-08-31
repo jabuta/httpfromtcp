@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"httpfromtcp/internal/headers"
 	"httpfromtcp/internal/request"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -33,44 +35,22 @@ func main() {
 
 func testHandler(w *response.Writer, req *request.Request) {
 	if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin") {
-		handleHttpBinProxy(w, req.RequestLine.RequestTarget)
+		httpbinProxyHandler(w, req)
 		return
 	}
-	switch req.RequestLine.RequestTarget {
-	case "/yourproblem":
-		res := []byte(`<html>
-  <head>
-    <title>400 Bad Request</title>
-  </head>
-  <body>
-    <h1>Bad Request</h1>
-    <p>Your request honestly kinda sucked.</p>
-  </body>
-</html>`)
-		w.WriteStatusLine(response.HttpNotFoud)
-		headers := response.GetDefaultHeaders(len(res))
-		headers.Overwrite("Content-Type", "text/html")
-		w.WriteHeaders(headers)
-		w.WriteBody(res)
+	if req.RequestLine.RequestTarget == "/yourproblem" {
+		handle400(w, nil)
 		return
-	case "/myproblem":
-		res := []byte(`<html>
-  <head>
-    <title>500 Internal Server Error</title>
-  </head>
-  <body>
-    <h1>Internal Server Error</h1>
-    <p>Okay, you know what? This one is on me.</p>
-  </body>
-</html>`)
-		w.WriteStatusLine(response.HttpServerError)
-		headers := response.GetDefaultHeaders(len(res))
-		headers.Overwrite("Content-Type", "text/html")
-		w.WriteHeaders(headers)
-		w.WriteBody(res)
+	}
+	if req.RequestLine.RequestTarget == "/myproblem" {
+		handle500(w, req)
 		return
-	default:
-		res := []byte(`<html>
+	}
+	handle200(w, req)
+}
+
+func handle200(w *response.Writer, _ *request.Request) {
+	res := []byte(`<html>
   <head>
     <title>200 OK</title>
   </head>
@@ -79,59 +59,102 @@ func testHandler(w *response.Writer, req *request.Request) {
     <p>Your request was an absolute banger.</p>
   </body>
 </html>`)
-		w.WriteStatusLine(response.HttpOK)
-		headers := response.GetDefaultHeaders(len(res))
-		headers.Overwrite("Content-Type", "text/html")
-		w.WriteHeaders(headers)
-		w.WriteBody(res)
-	}
+	w.WriteStatusLine(response.HttpOK)
+	headers := response.GetDefaultHeaders(len(res))
+	headers.Overwrite("Content-Type", "text/html")
+	w.WriteHeaders(headers)
+	w.WriteBody(res)
 }
 
-func handleHttpBinProxy(w *response.Writer, path string) {
+func handle400(w *response.Writer, _ *request.Request) {
+	res := []byte(`<html>
+ <head>
+   <title>400 Bad Request</title>
+ </head>
+ <body>
+   <h1>Bad Request</h1>
+   <p>Your request honestly kinda sucked.</p>
+ </body>
+</html>`)
+	w.WriteStatusLine(response.HttpNotFoud)
+	headers := response.GetDefaultHeaders(len(res))
+	headers.Overwrite("Content-Type", "text/html")
+	w.WriteHeaders(headers)
+	w.WriteBody(res)
+}
 
-	path = strings.Trim(path, "httpbin/")
+func handle500(w *response.Writer, _ *request.Request) {
+	res := []byte(`<html>
+  <head>
+    <title>500 Internal Server Error</title>
+  </head>
+  <body>
+    <h1>Internal Server Error</h1>
+    <p>Okay, you know what? This one is on me.</p>
+  </body>
+</html>`)
+	w.WriteStatusLine(response.HttpServerError)
+	headers := response.GetDefaultHeaders(len(res))
+	headers.Overwrite("Content-Type", "text/html")
+	w.WriteHeaders(headers)
+	w.WriteBody(res)
+}
 
-	binResp, err := http.Get(fmt.Sprintf("https://httpbin.org/%s", path))
+func httpbinProxyHandler(w *response.Writer, req *request.Request) {
+
+	path := strings.TrimPrefix(req.RequestLine.RequestTarget, "/httpbin")
+	fmt.Println(req.RequestLine.RequestTarget)
+
+	binResp, err := http.Get(fmt.Sprintf("https://httpbin.org%s", path))
+	fmt.Printf("https://httpbin.org/%s\n", path)
 	if err != nil {
-		// if urlErr, ok := err.(*url.Error); ok {
-		// 	if urlErr.Timeout() {
-		// 		w.WriteStatusLine(response.HttpServerError)
-		// 		return
-		// 	}
-		// }
-		w.WriteStatusLine(response.HttpServerError)
+		handle500(w, req)
 		return
 	}
+	defer binResp.Body.Close()
+
+	w.WriteStatusLine(http.StatusOK)
+
 	// Set headers
 	h := headers.NewHeaders()
-	for key, values := range binResp.Header {
-		for _, value := range values {
-			h.Set(key, value)
-		}
-	}
-
-	// Get Status Code and send to client and respond with headers
-	statusCode := response.StatusCode(binResp.StatusCode)
-	w.WriteStatusLine(statusCode)
+	h.Delete("Content-Length")
+	h.Overwrite("Transfer-Encoding", "chunked")
+	h.Set("Trailer", "X-Content-SHA256")
+	h.Set("Trailer", "X-Content-Length")
 	w.WriteHeaders(h)
 
 	b := make([]byte, 1024)
 
+	lenResp := 0
+	hashResp := sha256.New()
 	for {
 		n, err := binResp.Body.Read(b)
 		fmt.Println("bytes read: ", n)
 		if n > 0 {
-			if _, writeErr := w.WriteBody(b[:n]); writeErr != nil {
-				fmt.Printf("Write error: %s", writeErr)
+			if _, writeErr := w.WriteChunkedBody(b[:n]); writeErr != nil {
+				fmt.Printf("Write error: %s\n", writeErr)
 			}
+			lenResp += n
+			hashResp.Write(b[:n])
 		}
 		if err != nil {
 			if err != io.EOF {
-				fmt.Printf("Read error: %s", err)
-				return
+				fmt.Printf("Read error: %s\n", err)
+				break
 			}
 			break
 		}
 	}
+	_, err = w.WriteChunkedBodyEnd()
+	if err != nil {
+		fmt.Printf("Error writing chunked body end: %v", err)
+	}
 
+	trailers := headers.NewHeaders()
+	trailers.Set("X-Content-SHA256", fmt.Sprintf("%x", hashResp.Sum(nil)))
+	trailers.Set("X-Content-Length", strconv.Itoa(lenResp))
+	err = w.WriteTrailers(trailers)
+	if err != nil {
+		fmt.Printf("Error writing Trailers: %v", err)
+	}
 }
