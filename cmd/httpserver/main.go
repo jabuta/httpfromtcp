@@ -46,6 +46,10 @@ func testHandler(w *response.Writer, req *request.Request) {
 		handle500(w, req)
 		return
 	}
+	if req.RequestLine.RequestTarget == "/video" {
+		handleVideo(w, req)
+		return
+	}
 	handle200(w, req)
 }
 
@@ -116,7 +120,7 @@ func httpbinProxyHandler(w *response.Writer, req *request.Request) {
 	w.WriteStatusLine(http.StatusOK)
 
 	// Set headers
-	h := headers.NewHeaders()
+	h := response.GetDefaultHeaders(0)
 	h.Delete("Content-Length")
 	h.Overwrite("Transfer-Encoding", "chunked")
 	h.Set("Trailer", "X-Content-SHA256")
@@ -130,6 +134,61 @@ func httpbinProxyHandler(w *response.Writer, req *request.Request) {
 	for {
 		n, err := binResp.Body.Read(b)
 		fmt.Println("bytes read: ", n)
+		if n > 0 {
+			if _, writeErr := w.WriteChunkedBody(b[:n]); writeErr != nil {
+				fmt.Printf("Write error: %s\n", writeErr)
+			}
+			lenResp += n
+			hashResp.Write(b[:n])
+		}
+		if err != nil {
+			if err != io.EOF {
+				fmt.Printf("Read error: %s\n", err)
+				break
+			}
+			break
+		}
+	}
+	_, err = w.WriteChunkedBodyEnd()
+	if err != nil {
+		fmt.Printf("Error writing chunked body end: %v", err)
+	}
+
+	trailers := headers.NewHeaders()
+	trailers.Set("X-Content-SHA256", fmt.Sprintf("%x", hashResp.Sum(nil)))
+	trailers.Set("X-Content-Length", strconv.Itoa(lenResp))
+	err = w.WriteTrailers(trailers)
+	if err != nil {
+		fmt.Printf("Error writing Trailers: %v", err)
+	}
+}
+
+func handleVideo(w *response.Writer, req *request.Request) {
+	videoFile, err := os.Open("assets/vim.mp4")
+	if err != nil {
+		fmt.Println(err)
+		handle500(w, req)
+		return
+	}
+
+	w.WriteStatusLine(http.StatusOK)
+
+	// Set headers
+	h := response.GetDefaultHeaders(0)
+	h.Delete("Content-Length")
+	h.Overwrite("Content-Type", "video/mp4")
+	h.Overwrite("Transfer-Encoding", "chunked")
+	h.Set("Trailer", "X-Content-SHA256")
+	h.Set("Trailer", "X-Content-Length")
+	w.WriteHeaders(h)
+
+	b := make([]byte, 1024)
+	lenResp := 0
+	hashResp := sha256.New()
+
+	for {
+		n, err := videoFile.Read(b)
+		fmt.Println("bytes sent: ", n)
 		if n > 0 {
 			if _, writeErr := w.WriteChunkedBody(b[:n]); writeErr != nil {
 				fmt.Printf("Write error: %s\n", writeErr)
